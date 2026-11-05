@@ -672,6 +672,30 @@ function formatSpan(n){
  const parts=[];if(mo>=12)parts.push(ar(Math.floor(mo/12))+' سنة');if(mo%12)parts.push(ar(mo%12)+' شهر');if(d||!parts.length)parts.push(ar(d)+' يوم شغل');
  return parts.join(' و');
 }
+const SAVE_KEY='ndl.save';
+function saveGame(){
+ if(!S||S.phase!=='night')return;
+ try{
+  const data=JSON.stringify({v:1,uid,prices:MEDS.map(m=>[m.n,m.price,m.base]),S},(k,v)=>v&&typeof v==='object'&&MEDS.includes(v)?{__m:v.n}:v);
+  localStorage.setItem(SAVE_KEY,data);
+ }catch(e){}
+}
+function savedInfo(){
+ try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return null;const d=JSON.parse(raw);return d&&d.v===1&&d.S?d.S:null;}catch(e){return null;}
+}
+function clearSave(){try{localStorage.removeItem(SAVE_KEY);}catch(e){}}
+function loadGame(){
+ try{
+  const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
+  const d=JSON.parse(raw,(k,v)=>v&&v.__m?(MEDS.find(m=>m.n===v.__m)||v):v);
+  if(!d||d.v!==1||!d.S||d.S.phase!=='night')return false;
+  for(const [n,price,base] of d.prices){const m=MEDS.find(x=>x.n===n);if(m){m.price=price;m.base=base;}}
+  S=d.S;uid=d.uid||uid;
+  S.fx=[];S.says=[];S.panel=null;S.selected=null;S.drag=null;S.down=null;S.speed=1;S.closing=null;
+  bg=null;layerKey='';
+  return true;
+ }catch(e){return false;}
+}
 const readBest=()=>{try{return +localStorage.getItem('ndl.best')||0;}catch(e){return 0;}};
 const saveBest=n=>{try{if(n>readBest())localStorage.setItem('ndl.best',String(n));}catch(e){}};
 
@@ -1946,6 +1970,7 @@ function step(dt){
 }
 
 function startDay(){
+ saveGame();
  $('openBtn').hidden=true;
  const clockT=h=>(h-DAY_START)/DAY_HOURS*DAY_LEN;
  const first=clockT(rnd(8.5,8.75)),lastReq=clockT(12);S.firstNurse=first; // Requests come between about 8:30 and 12:00.
@@ -2267,6 +2292,7 @@ function endDay(){
   <button class="btn primary" data-act="afterDay">كمل</button>`);
  sfx('close');
  renderBar();updateHud();
+ S.nightDone=false;saveGame();
 }
 // A good day may earn a message from Dr. Heba on the hospital's pharmacists group.
 function groupPraise(grade,st,left){
@@ -2324,6 +2350,7 @@ function takeShortcut(id){
  updateHud();sfx('page');
 }
 function endGame(why){
+ clearSave();
  S.phase='over';S.ev=null;$('ev').hidden=true;closePanel();$('sheet').hidden=true;$('openBtn').hidden=true;
  saveBest(S.dayCount);
  const best=readBest();
@@ -2568,6 +2595,18 @@ function signed(n){
 /* ---------- Actions ---------- */
 const ACTIONS={
  begin(){initAudio();showIntro();},
+ resume(){
+  initAudio();
+  if(!loadGame()){clearSave();showTitle();return;}
+  closeModal();renderBar();updateHud();
+  if(!S.nightDone)ACTIONS.afterDay();
+  else note('رجعنا لآخر يوم اتحفظ. دوس <b>افتح الصيدلية</b> لما تبقى جاهز.',6);
+ },
+ askNew(){initAudio();openModal(`${formHead('وردية جديدة')}<h2>تبدأ من الأول؟</h2><p>الوردية المحفوظة هتتمسح، ومش هترجع تاني.</p>
+  <button class="btn primary" data-act="confirmNew">أيوة، ابدأ من الأول</button>
+  <button class="btn" style="margin-top:6px" data-act="backTitle">لا، ارجع</button>`);},
+ confirmNew(){clearSave();showIntro();},
+ backTitle(){showTitle();},
  go(){closeModal();startDay();},
  startDay(){startDay();},
  closeModal(){closeModal();},
@@ -2587,10 +2626,11 @@ const ACTIONS={
    return;
   }
   if(S.wa){const h=S.wa;S.wa=null;sfx('chime');openModal(h);return;}
+  S.nightDone=true;saveGame();
   offerShortcut();renderBar();
  },
  emanOff(el){const e=S.ph.find(p=>p.learns);e.off=+el.dataset.d;ACTIONS.afterDay();},
- takeShort(el){closeModal();takeShortcut(el.dataset.k);renderBar();},
+ takeShort(el){closeModal();takeShortcut(el.dataset.k);renderBar();saveGame();},
  speed(el){S.speed=S.speed===1?2:1;el.textContent='×'+ar(S.speed);},
  music(el){initAudio();setMusic(!musicOn);el.style.opacity=musicOn?1:.45;note(musicOn?'الموسيقى اشتغلت.':'الموسيقى اتقفلت.',2);},
  mute(el){muted=!muted;el.style.opacity=muted?.45:1;if(master)master.gain.value=muted?0:1.15;try{localStorage.setItem('ndl.muted',muted?'1':'0');}catch(e){}},
@@ -2598,7 +2638,7 @@ const ACTIONS={
  restart(){closeModal();newGame();S.phase='title';showTitle();renderBar();updateHud();},
  useRec(el){
   const k=el.dataset.k,lv=S.lv[k];if(lv>=5||S.recs<=0)return;
-  S.recs--;S.xp[k]=Math.max(S.xp[k],XP_NEED[k][lv]);S.lv[k]++;bg=null;sfx('gift');openUpgrade(k);updateHud();renderBar();
+  S.recs--;S.xp[k]=Math.max(S.xp[k],XP_NEED[k][lv]);S.lv[k]++;bg=null;sfx('gift');openUpgrade(k);updateHud();renderBar();saveGame();
  },
  prepBox(el){
   const n=S.q[0],i=+el.dataset.i;if(!n||n.k!=='prep')return;
@@ -2721,11 +2761,13 @@ document.addEventListener('click',e=>{
 function openModal(html){const m=$('modal');m.innerHTML=`<div class="paper">${html}</div>`;m.hidden=false;}
 function closeModal(){$('modal').hidden=true;}
 function showTitle(){
- const best=readBest();
+ const best=readBest(),saved=savedInfo();
  openModal(`${formHead('نموذج ١٣ داخلي')}<div class="stampmark" style="float:left;font-size:15px;margin:0 0 2px">صورة طبق الأصل</div><h1>على نفقة الدولة</h1>
   <p>صيدلية نفقة الدولة ٢: أوضة صغيرة جوه المستشفى. رعاية باطنة واستقبال وسكتة وقسطرة نازلين عليك، وأربع دكاترة في أحسن الأحوال. الورق بييجي لوحده، والممرضات بييجوا وراه.</p>
   ${best?`<p><b>أطول مدة:</b> ${formatSpan(best)}</p>`:''}
-  <button class="btn primary" data-act="begin">ابدأ الوردية</button>`);
+  ${saved?`<p><b>وردية محفوظة:</b> ${DAYS[saved.dom%6]}، أسبوع ${ar(Math.floor(saved.dom/6)+1)}، بعد ${formatSpan(saved.dayCount)}. ملف الجزاءات ${ar(Math.round(saved.file))}٪.</p>
+  <button class="btn primary" data-act="resume">كمل الوردية</button>
+  <button class="btn" style="margin-top:6px" data-act="askNew">وردية جديدة</button>`:`<button class="btn primary" data-act="begin">ابدأ الوردية</button>`}`);
 }
 function showIntro(){
  openModal(`${formHead('تعليمات الوردية')}<h2>إنت اللي ماسك الوردية</h2>
